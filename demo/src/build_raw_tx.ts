@@ -1,102 +1,75 @@
-import { createWalletClient, http, parseEther, parseGwei, type Hash, type TransactionReceipt } from 'viem'
+import { createWalletClient, encodeFunctionData, http, parseEther, parseGwei, type Hash, type TransactionReceipt } from 'viem'
 import { prepareTransactionRequest } from 'viem/actions'
-import { mnemonicToAccount, privateKeyToAccount, type PrivateKeyAccount } from 'viem/accounts'
-import { foundry } from 'viem/chains'
+import { generatePrivateKey, mnemonicToAccount, privateKeyToAccount, type PrivateKeyAccount } from 'viem/accounts'
+import { sepolia } from 'viem/chains'
 import { createPublicClient, type PublicClient, type WalletClient } from 'viem'
 import dotenv from 'dotenv'
+import { readFileSync } from 'fs'
+const erc20Abi = JSON.parse(
+  readFileSync('./src/abis/BASEERC20.json', 'utf-8')
+).abi
+
 
 dotenv.config()
 
-async function sendTransactionExample(): Promise<Hash> {
+async function sendERC20Transaction(): Promise<any> {
   try {
-    // const privateKey = generatePrivateKey()
-
     // 1. 从环境变量获取私钥
     const privateKey = process.env.PRIVATE_KEY as `0x${string}`
     if (!privateKey) {
       throw new Error('请在 .env 文件中设置 PRIVATE_KEY')
     }
 
-    // 使用助记词 推导账户
-    // const account = mnemonicToAccount('') 
-    // 使用私钥 推导账户
+    // 2. 创建账户
     const account: PrivateKeyAccount = privateKeyToAccount(privateKey)
     const userAddress = account.address
     console.log('账户地址:', userAddress)
 
-    // 创建公共客户端
+    // 3. 创建公共客户端
     const publicClient: PublicClient = createPublicClient({
-      chain: foundry,
+      chain: sepolia,
       transport: http(process.env.RPC_URL)
     })
 
-    // 检查网络状态
-    const blockNumber = await publicClient.getBlockNumber()
-    console.log('当前区块号:', blockNumber)
-
-    // 获取当前 gas 价格
-    const gasPrice = await publicClient.getGasPrice()
-    console.log('当前 gas 价格:', parseGwei(gasPrice.toString()))
-
-    // 查询余额
-    const balance = await publicClient.getBalance({
-      address: userAddress
-    })
-    console.log('账户余额:', parseEther(balance.toString()))
-
-    // 查询nonce
-    const nonce = await publicClient.getTransactionCount({
-      address: userAddress
-    })
-    console.log('当前 Nonce:', nonce)
-
-    // 2. 构建交易参数
-    const txParams = {
-      account: account,
-      to: '0x01BF49D75f2b73A2FDEFa7664AEF22C86c5Be3df' as `0x${string}`, // 目标地址
-      value: parseEther('0.001'), // 发送金额（ETH）
-      chainId: foundry.id,
-      type: 'eip1559' as const, // 使用 const 断言确保类型正确
-      chain: foundry, // 添加 chain 参数
-      
-      // EIP-1559 交易参数
-      maxFeePerGas: gasPrice * 2n, // 最大总费用为当前 gas 价格的 2 倍
-      maxPriorityFeePerGas: parseGwei('1.5'), // 最大小费
-      gas: 21000n,   // gas limit
-      nonce: nonce,
-    }
-
-    // 或 自动 Gas 估算 及参数验证和补充
-    const preparedTx = await prepareTransactionRequest(publicClient, txParams)
-    console.log('准备后的交易参数:', {
-      ...preparedTx,
-      maxFeePerGas: parseGwei(preparedTx.maxFeePerGas.toString()),
-      maxPriorityFeePerGas: parseGwei(preparedTx.maxPriorityFeePerGas.toString()),
-    })
-
-    // 创建钱包客户端
+    // 4. 创建钱包客户端
     const walletClient: WalletClient = createWalletClient({
       account: account,
-      chain: foundry,
+      chain: sepolia,
       transport: http(process.env.RPC_URL)
     })
 
-    // // 方式 1：直接发送交易
-    // const txHash1 = await walletClient.sendTransaction(preparedTx)
-    // console.log('交易哈希:', txHash1)
+    // 5. 构建ERC20转账交易
+    const txParams = {
+      account: account,
+      to: process.env.TOKEN_ADDRESS as `0x${string}`,
+      data: encodeFunctionData({
+        abi: erc20Abi,
+        functionName: 'transfer',
+        args: [process.env.RECEIVER_ADDRESS as `0x${string}`, parseEther('1')]
+      }),
+      chain: sepolia,
+      chainId: sepolia.id,
+      type: 'eip1559' as const,
+      maxFeePerGas: parseGwei('20'),
+      maxPriorityFeePerGas: parseGwei('1.5'),
+      gas: 100000n
+    }
 
-    // 方式 2 ： 
-    // 签名交易
+    // 6. 准备交易
+    const preparedTx = await prepareTransactionRequest(publicClient, txParams)
+    console.log('准备后的交易参数:', preparedTx)
+
+    // 7. 签名交易
     const signedTx = await walletClient.signTransaction(preparedTx)
-    console.log('Signed Transaction:', signedTx)
+    console.log('签名后的交易:', signedTx)
 
-    // 发送交易  eth_sendRawTransaction
+    // 8. 发送交易
     const txHash = await publicClient.sendRawTransaction({
-        serializedTransaction: signedTx
+      serializedTransaction: signedTx
     })
-    console.log('Transaction Hash:', txHash)
+    console.log('交易哈希:', txHash)
 
-    // 等待交易确认
+    // 9. 等待交易确认
     const receipt: TransactionReceipt = await publicClient.waitForTransactionReceipt({ hash: txHash })
     console.log('交易状态:', receipt.status === 'success' ? '成功' : '失败')
     console.log('区块号:', receipt.blockNumber)
@@ -109,12 +82,9 @@ async function sendTransactionExample(): Promise<Hash> {
     if (error instanceof Error) {
       console.error('错误信息:', error.message)
     }
-    if (error && typeof error === 'object' && 'details' in error) {
-      console.error('错误详情:', error.details)
-    }
     throw error
   }
 }
 
 // 执行示例
-sendTransactionExample() 
+sendERC20Transaction()
