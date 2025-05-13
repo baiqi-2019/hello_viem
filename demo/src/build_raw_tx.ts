@@ -45,7 +45,7 @@ async function sendERC20Transaction(): Promise<any> {
       data: encodeFunctionData({
         abi: erc20Abi,
         functionName: 'transfer',
-        args: [process.env.RECEIVER_ADDRESS as `0x${string}`, parseEther('1')]
+        args: [process.env.RECEIVER_ADDRESS as `0x${string}`, parseEther('1000')]
       }),
       chain: sepolia,
       chainId: sepolia.id,
