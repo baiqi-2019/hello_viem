@@ -1,15 +1,17 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { createPublicClient, createWalletClient, http, formatEther, getContract, custom, parseEther, Hex, encodeFunctionData } from 'viem';
+import { createPublicClient, createWalletClient, http, formatEther, getContract, custom, parseEther, Hex, encodeFunctionData, stringToHex, toBytes } from 'viem';
 import { signTypedData } from 'viem/actions';
 import { sepolia } from 'viem/chains';
 import TokenBank_ABI from './contracts/TokenBank.json';
 
 // TokenBank 合约地址
-const TOKEN_BANK_ADDRESS = "0xD3375B8927db243335501EC0436c0283E71031B6";
+// const TOKEN_BANK_ADDRESS = "0xD3375B8927db243335501EC0436c0283E71031B6";
 // PermitTokenBank 合约地址
-const PERMIT_TOKEN_BANK_ADDRESS = "0x201Fc8A0607070D04e98eA68B559F4A7fD7aB4e8";
+// const PERMIT_TOKEN_BANK_ADDRESS = "0x201Fc8A0607070D04e98eA68B559F4A7fD7aB4e8";
+// Permit2TokenBank 合约地址
+const PERMIT2_TOKEN_BANK_ADDRESS = "0x87E973548E052DeFf9627f18d7eFDe563557cFF6";
 
 export default function Home() {
   const [balance, setBalance] = useState<string>('0');
@@ -22,9 +24,12 @@ export default function Home() {
   const [chainId, setChainId] = useState<number | undefined>();
   const [isLoading, setIsLoading] = useState(false);
   const [txHash, setTxHash] = useState<string>('');
-  // 新增状态
+  // 状态
   const [permitDepositAmount, setPermitDepositAmount] = useState<string>('');
   const [isPermitLoading, setIsPermitLoading] = useState(false);
+  // 新增状态：Permit2存款
+  const [permit2DepositAmount, setPermit2DepositAmount] = useState<string>('');
+  const [isPermit2Loading, setIsPermit2Loading] = useState(false);
 
   // 链接sepolia测试网
   const publicClient = createPublicClient({
@@ -78,14 +83,14 @@ export default function Home() {
     if (!address) return;
     
     const tokenBankContract = getContract({
-      address: PERMIT_TOKEN_BANK_ADDRESS, // 使用PermitTokenBank地址
+      address: PERMIT2_TOKEN_BANK_ADDRESS,
       abi: TokenBank_ABI.abi,
       client: publicClient,
     });
 
     try {
       // 获取用户在TokenBank中的存款余额
-      const depositBal = await tokenBankContract.read.balanceOf([address]);
+      const depositBal = await tokenBankContract.read.balanceOf([address]) as bigint;
       setDepositBalance(formatEther(depositBal));
       
       // 获取Token合约地址
@@ -121,12 +126,12 @@ export default function Home() {
     try {
       const walletClient = createWalletClient({
         chain: sepolia,
-        transport: custom(window.ethereum),
+        transport: custom(window.ethereum as any),
       });
 
       // 首先需要批准TokenBank合约使用Token
       const tokenBankContract = getContract({
-        address: PERMIT_TOKEN_BANK_ADDRESS, // 修改这里，使用PERMIT_TOKEN_BANK_ADDRESS
+        address: PERMIT2_TOKEN_BANK_ADDRESS,
         abi: TokenBank_ABI.abi,
         client: publicClient,
       });
@@ -155,7 +160,7 @@ export default function Home() {
       });
       
       const approveHash = await tokenContract.write.approve([
-        PERMIT_TOKEN_BANK_ADDRESS, // 修改这里，使用PERMIT_TOKEN_BANK_ADDRESS
+        PERMIT2_TOKEN_BANK_ADDRESS,
         parseEther(depositAmount),
       ], { account: address });
       
@@ -166,7 +171,7 @@ export default function Home() {
       
       // 然后调用存款方法
       const hash = await walletClient.writeContract({
-        address: PERMIT_TOKEN_BANK_ADDRESS, // 修改这里，使用PERMIT_TOKEN_BANK_ADDRESS
+        address: PERMIT2_TOKEN_BANK_ADDRESS,
         abi: TokenBank_ABI.abi,
         functionName: 'deposit',
         args: [parseEther(depositAmount)],
@@ -196,11 +201,11 @@ export default function Home() {
     try {
       const walletClient = createWalletClient({
         chain: sepolia,
-        transport: custom(window.ethereum),
+        transport: custom(window.ethereum as any),
       });
 
       const hash = await walletClient.writeContract({
-        address: PERMIT_TOKEN_BANK_ADDRESS, // 修改这里，使用PERMIT_TOKEN_BANK_ADDRESS
+        address: PERMIT2_TOKEN_BANK_ADDRESS,
         abi: TokenBank_ABI.abi,
         functionName: 'withdraw',
         args: [parseEther(withdrawAmount)],
@@ -221,7 +226,7 @@ export default function Home() {
     }
   };
 
-  // 新增：通过签名存款
+  // 通过签名存款 (EIP-2612)
   const handlePermitDeposit = async () => {
     if (!address || !permitDepositAmount) return;
     setIsPermitLoading(true);
@@ -230,12 +235,12 @@ export default function Home() {
     try {
       const walletClient = createWalletClient({
         chain: sepolia,
-        transport: custom(window.ethereum),
+        transport: custom(window.ethereum as any),
       });
 
       // 获取PermitTokenBank合约
       const tokenBankContract = getContract({
-        address: PERMIT_TOKEN_BANK_ADDRESS,
+        address: PERMIT2_TOKEN_BANK_ADDRESS,
         abi: TokenBank_ABI.abi,
         client: publicClient,
       });
@@ -292,7 +297,7 @@ export default function Home() {
       
       const value = {
         owner: address,
-        spender: PERMIT_TOKEN_BANK_ADDRESS,
+        spender: PERMIT2_TOKEN_BANK_ADDRESS,
         value: parseEther(permitDepositAmount),
         nonce,
         deadline,
@@ -315,7 +320,7 @@ export default function Home() {
       
       // 调用permitDeposit方法
       const hash = await walletClient.writeContract({
-        address: PERMIT_TOKEN_BANK_ADDRESS,
+        address: PERMIT2_TOKEN_BANK_ADDRESS,
         abi: TokenBank_ABI.abi,
         functionName: 'permitDeposit',
         args: [parseEther(permitDepositAmount), deadline, v, r, s],
@@ -333,6 +338,217 @@ export default function Home() {
       console.error('签名存款失败:', error);
     } finally {
       setIsPermitLoading(false);
+    }
+  };
+
+  // 新增：通过Permit2存款
+  const handlePermit2Deposit = async () => {
+    if (!address || !permit2DepositAmount) return;
+    setIsPermit2Loading(true);
+    setTxHash('');
+    
+    try {
+      const walletClient = createWalletClient({
+        chain: sepolia,
+        transport: custom(window.ethereum as any),
+      });
+
+      // 获取TokenBank合约
+      const tokenBankContract = getContract({
+        address: PERMIT2_TOKEN_BANK_ADDRESS,
+        abi: TokenBank_ABI.abi,
+        client: publicClient,
+      });
+      
+      // 打印合约函数列表，确认可用的函数
+      console.log('合约函数列表:', TokenBank_ABI.abi
+        .filter(item => item.type === 'function')
+        .map(fn => `${fn.name}(${fn.inputs?.map(input => `${input.type} ${input.name}`).join(', ')})`));
+      
+      // 检查合约是否有depositWithPermit2函数
+      const depositWithPermit2Function = TokenBank_ABI.abi.find(
+        item => item.type === 'function' && item.name === 'depositWithPermit2'
+      );
+      
+      if (!depositWithPermit2Function) {
+        console.error('合约中找不到depositWithPermit2函数！查找可能的替代函数...');
+        // 打印所有函数名，帮助识别正确的函数
+        const allFunctions = TokenBank_ABI.abi
+          .filter(item => item.type === 'function')
+          .map(fn => fn.name || 'unnamed');
+        console.log('可用函数:', allFunctions);
+        
+        // 尝试查找名称相似的函数
+        const similarFunctions = allFunctions.filter(name => 
+          name.toLowerCase().includes('permit') && name.toLowerCase().includes('deposit')
+        );
+        
+        if (similarFunctions.length > 0) {
+          console.log('找到可能相关的函数:', similarFunctions);
+          throw new Error(`合约中找不到depositWithPermit2函数！可能的替代函数: ${similarFunctions.join(', ')}`);
+        } else {
+          throw new Error('合约中找不到depositWithPermit2函数，也没有找到类似的函数！请检查ABI是否正确。');
+        }
+      }
+      
+      console.log('depositWithPermit2函数签名:', 
+        `depositWithPermit2(${depositWithPermit2Function.inputs?.map(input => `${input.type} ${input.name}`).join(', ')})`);
+      
+      // 获取Token合约地址
+      const tokenAddress = await tokenBankContract.read.token() as `0x${string}`;
+      
+      // 获取Permit2地址
+      const permit2Address = await tokenBankContract.read.PERMIT2_ADDRESS() as `0x${string}`;
+      
+      console.log('Permit2 address:', permit2Address);
+      console.log('Token address:', tokenAddress);
+      
+      // 首先需要批准Permit2合约使用Token
+      const tokenContract = getContract({
+        address: tokenAddress,
+        abi: [{
+          "type": "function",
+          "name": "approve",
+          "inputs": [
+            { "name": "spender", "type": "address" },
+            { "name": "amount", "type": "uint256" }
+          ],
+          "outputs": [{ "name": "", "type": "bool" }],
+          "stateMutability": "nonpayable"
+        }],
+        client: {
+          public: publicClient,
+          wallet: walletClient,
+        },
+      });
+      
+      console.log('Approving Permit2 to spend tokens...');
+      // 授权Permit2代表用户转账
+      const approveHash = await tokenContract.write.approve([
+        permit2Address,
+        parseEther(permit2DepositAmount),
+      ], { account: address });
+      
+      console.log('Approve hash:', approveHash);
+      
+      // 等待批准交易确认
+      await publicClient.waitForTransactionReceipt({ hash: approveHash });
+      console.log('Approval confirmed');
+      
+      // 获取nonce - 随机生成一个nonce
+      const nonce = BigInt(Math.floor(Math.random() * 1000000));
+      
+      // 设置deadline为当前时间+1小时
+      const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
+      
+      // 准备Permit2签名数据
+      const domain = {
+        name: 'Permit2',
+        version: '1',
+        chainId: sepolia.id,
+        verifyingContract: permit2Address,
+      };
+      
+      // 根据Permit2规范定义类型
+      const types = {
+        TokenPermissions: [
+          { name: 'token', type: 'address' },
+          { name: 'amount', type: 'uint256' }
+        ],
+        PermitSingle: [
+          { name: 'details', type: 'PermitDetails' },
+          { name: 'spender', type: 'address' },
+          { name: 'sigDeadline', type: 'uint256' }
+        ],
+        PermitDetails: [
+          { name: 'token', type: 'address' },
+          { name: 'amount', type: 'uint256' },
+          { name: 'expiration', type: 'uint256' },
+          { name: 'nonce', type: 'uint256' }
+        ]
+      };
+      
+      // 当前时间+1小时（秒）
+      const expiration = BigInt(Math.floor(Date.now() / 1000) + 3600);
+      
+      // 构建签名消息
+      const value = {
+        details: {
+          token: tokenAddress,
+          amount: parseEther(permit2DepositAmount),
+          expiration,
+          nonce
+        },
+        spender: PERMIT2_TOKEN_BANK_ADDRESS,
+        sigDeadline: deadline
+      };
+      
+      console.log('Signing Permit2 message...');
+      // 创建一个自定义stringify函数处理BigInt
+      const customStringify = (obj: any) => {
+        return JSON.stringify(obj, (_, value) => 
+          typeof value === 'bigint' ? value.toString() : value
+        );
+      };
+      console.log('Value to sign:', customStringify(value));
+      
+      // 签名
+      const signature = await signTypedData(walletClient, {
+        account: address,
+        domain,
+        types,
+        primaryType: 'PermitSingle',
+        message: value,
+      });
+      
+      console.log('Signature:', signature);
+      
+      // 调用depositWithPermit2方法
+      console.log('Calling depositWithPermit2 with args:', customStringify([
+        parseEther(permit2DepositAmount), 
+        nonce, 
+        deadline, 
+        signature
+      ]));
+      
+      // 准备调用合约的参数
+      // 检查合约中实际可能的函数名称
+      let functionName = 'depositWithPermit2';
+      
+      // 如果找到了类似的函数替代
+      const allPermitFunctions = TokenBank_ABI.abi
+        .filter(item => item.type === 'function' && 
+                item.name && 
+                item.name.toLowerCase().includes('permit') && 
+                item.name.toLowerCase().includes('deposit'))
+        .map(fn => fn.name || 'unnamed');
+        
+      if (allPermitFunctions.length > 0 && !allPermitFunctions.includes('depositWithPermit2')) {
+        // 如果没有找到exactMatch但有类似的函数，使用第一个类似的函数
+        functionName = allPermitFunctions[0];
+        console.log(`使用找到的替代函数: ${functionName} 代替 depositWithPermit2`);
+      }
+      
+      const hash = await walletClient.writeContract({
+        address: PERMIT2_TOKEN_BANK_ADDRESS,
+        abi: TokenBank_ABI.abi,
+        functionName: functionName,
+        args: [parseEther(permit2DepositAmount), nonce, deadline, signature],
+        account: address,
+      });
+      
+      console.log('Permit2 Deposit hash:', hash);
+      setTxHash(hash);
+      
+      // 等待交易确认后刷新余额
+      await publicClient.waitForTransactionReceipt({ hash });
+      fetchBalances();
+      setPermit2DepositAmount('');
+    } catch (error) {
+      console.error('Permit2签名存款失败:', error);
+      alert(`Permit2签名存款失败: ${error instanceof Error ? error.message : '未知错误'}`);
+    } finally {
+      setIsPermit2Loading(false);
     }
   };
 
@@ -416,7 +632,7 @@ export default function Home() {
               </div>
             </div>
             
-            {/* 新增：签名存款表单 */}
+            {/* 签名存款表单 (EIP-2612) */}
             <div className="border p-4 rounded-lg bg-blue-50">
               <h3 className="text-lg font-semibold mb-2">通过签名存款 (EIP-2612)</h3>
               <div className="flex space-x-2">
@@ -437,6 +653,29 @@ export default function Home() {
                 </button>
               </div>
               <p className="text-xs text-gray-600 mt-2">无需预先授权，一步完成签名和存款</p>
+            </div>
+            
+            {/* 新增：Permit2存款表单 */}
+            <div className="border p-4 rounded-lg bg-purple-50">
+              <h3 className="text-lg font-semibold mb-2">通过Permit2存款</h3>
+              <div className="flex space-x-2">
+                <input
+                  type="text"
+                  value={permit2DepositAmount}
+                  onChange={(e) => setPermit2DepositAmount(e.target.value)}
+                  placeholder="输入存款金额"
+                  className="flex-1 border rounded p-2"
+                  disabled={isPermit2Loading}
+                />
+                <button
+                  onClick={handlePermit2Deposit}
+                  disabled={isPermit2Loading || !permit2DepositAmount}
+                  className={`px-4 py-2 rounded ${isPermit2Loading ? 'bg-gray-400' : 'bg-purple-500 hover:bg-purple-600'} text-white`}
+                >
+                  {isPermit2Loading ? '处理中...' : 'Permit2存款'}
+                </button>
+              </div>
+              <p className="text-xs text-gray-600 mt-2">使用Permit2协议，更通用和安全的授权方式</p>
             </div>
             
             {/* 取款表单 */}
