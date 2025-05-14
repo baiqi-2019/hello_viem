@@ -1,12 +1,15 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { createPublicClient, createWalletClient, http, formatEther, getContract, custom, parseEther } from 'viem';
+import { createPublicClient, createWalletClient, http, formatEther, getContract, custom, parseEther, Hex, encodeFunctionData } from 'viem';
+import { signTypedData } from 'viem/actions';
 import { sepolia } from 'viem/chains';
 import TokenBank_ABI from './contracts/TokenBank.json';
 
 // TokenBank 合约地址
 const TOKEN_BANK_ADDRESS = "0xD3375B8927db243335501EC0436c0283E71031B6";
+// PermitTokenBank 合约地址
+const PERMIT_TOKEN_BANK_ADDRESS = "0x201Fc8A0607070D04e98eA68B559F4A7fD7aB4e8";
 
 export default function Home() {
   const [balance, setBalance] = useState<string>('0');
@@ -19,6 +22,9 @@ export default function Home() {
   const [chainId, setChainId] = useState<number | undefined>();
   const [isLoading, setIsLoading] = useState(false);
   const [txHash, setTxHash] = useState<string>('');
+  // 新增状态
+  const [permitDepositAmount, setPermitDepositAmount] = useState<string>('');
+  const [isPermitLoading, setIsPermitLoading] = useState(false);
 
   // 链接sepolia测试网
   const publicClient = createPublicClient({
@@ -72,7 +78,7 @@ export default function Home() {
     if (!address) return;
     
     const tokenBankContract = getContract({
-      address: TOKEN_BANK_ADDRESS,
+      address: PERMIT_TOKEN_BANK_ADDRESS, // 使用PermitTokenBank地址
       abi: TokenBank_ABI.abi,
       client: publicClient,
     });
@@ -120,7 +126,7 @@ export default function Home() {
 
       // 首先需要批准TokenBank合约使用Token
       const tokenBankContract = getContract({
-        address: TOKEN_BANK_ADDRESS,
+        address: PERMIT_TOKEN_BANK_ADDRESS, // 修改这里，使用PERMIT_TOKEN_BANK_ADDRESS
         abi: TokenBank_ABI.abi,
         client: publicClient,
       });
@@ -149,7 +155,7 @@ export default function Home() {
       });
       
       const approveHash = await tokenContract.write.approve([
-        TOKEN_BANK_ADDRESS,
+        PERMIT_TOKEN_BANK_ADDRESS, // 修改这里，使用PERMIT_TOKEN_BANK_ADDRESS
         parseEther(depositAmount),
       ], { account: address });
       
@@ -160,7 +166,7 @@ export default function Home() {
       
       // 然后调用存款方法
       const hash = await walletClient.writeContract({
-        address: TOKEN_BANK_ADDRESS,
+        address: PERMIT_TOKEN_BANK_ADDRESS, // 修改这里，使用PERMIT_TOKEN_BANK_ADDRESS
         abi: TokenBank_ABI.abi,
         functionName: 'deposit',
         args: [parseEther(depositAmount)],
@@ -194,7 +200,7 @@ export default function Home() {
       });
 
       const hash = await walletClient.writeContract({
-        address: TOKEN_BANK_ADDRESS,
+        address: PERMIT_TOKEN_BANK_ADDRESS, // 修改这里，使用PERMIT_TOKEN_BANK_ADDRESS
         abi: TokenBank_ABI.abi,
         functionName: 'withdraw',
         args: [parseEther(withdrawAmount)],
@@ -212,6 +218,121 @@ export default function Home() {
       console.error('取款失败:', error);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  // 新增：通过签名存款
+  const handlePermitDeposit = async () => {
+    if (!address || !permitDepositAmount) return;
+    setIsPermitLoading(true);
+    setTxHash('');
+    
+    try {
+      const walletClient = createWalletClient({
+        chain: sepolia,
+        transport: custom(window.ethereum),
+      });
+
+      // 获取PermitTokenBank合约
+      const tokenBankContract = getContract({
+        address: PERMIT_TOKEN_BANK_ADDRESS,
+        abi: TokenBank_ABI.abi,
+        client: publicClient,
+      });
+      
+      // 获取Token合约地址
+      const tokenAddress = await tokenBankContract.read.token() as `0x${string}`;
+      
+      // 获取Token合约
+      const tokenContract = getContract({
+        address: tokenAddress,
+        // 使用ERC20Permit标准ABI
+        abi: [
+          {
+            "type": "function",
+            "name": "nonces",
+            "inputs": [{ "name": "owner", "type": "address" }],
+            "outputs": [{ "name": "", "type": "uint256" }],
+            "stateMutability": "view"
+          },
+          {
+            "type": "function",
+            "name": "DOMAIN_SEPARATOR",
+            "inputs": [],
+            "outputs": [{ "name": "", "type": "bytes32" }],
+            "stateMutability": "view"
+          }
+        ],
+        client: publicClient,
+      });
+      
+      // 获取nonce
+      const nonce = await tokenContract.read.nonces([address]);
+      
+      // 设置deadline为当前时间+1小时
+      const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
+      
+      // 准备签名数据
+      const domain = {
+        name: 'AndyToken', // 需要替换为实际的Token名称
+        version: '1',
+        chainId: sepolia.id,
+        verifyingContract: tokenAddress,
+      };
+      
+      const types = {
+        Permit: [
+          { name: 'owner', type: 'address' },
+          { name: 'spender', type: 'address' },
+          { name: 'value', type: 'uint256' },
+          { name: 'nonce', type: 'uint256' },
+          { name: 'deadline', type: 'uint256' },
+        ],
+      };
+      
+      const value = {
+        owner: address,
+        spender: PERMIT_TOKEN_BANK_ADDRESS,
+        value: parseEther(permitDepositAmount),
+        nonce,
+        deadline,
+      };
+      
+      // 签名
+      const signature = await signTypedData(walletClient, {
+        account: address,
+        domain,
+        types,
+        primaryType: 'Permit',
+        message: value,
+      });
+      
+      // 从签名中提取v, r, s
+      // 使用 viem 的签名格式提取 r, s, v
+      const r = signature.slice(0, 66) as Hex;
+      const s = ('0x' + signature.slice(66, 130)) as Hex;
+      const v = parseInt('0x' + signature.slice(130, 132), 16);
+      
+      // 调用permitDeposit方法
+      const hash = await walletClient.writeContract({
+        address: PERMIT_TOKEN_BANK_ADDRESS,
+        abi: TokenBank_ABI.abi,
+        functionName: 'permitDeposit',
+        args: [parseEther(permitDepositAmount), deadline, v, r, s],
+        account: address,
+      });
+      
+      console.log('Permit Deposit hash:', hash);
+      setTxHash(hash);
+      
+      // 等待交易确认后刷新余额
+      await publicClient.waitForTransactionReceipt({ hash });
+      fetchBalances();
+      setPermitDepositAmount('');
+    } catch (error) {
+      console.error('签名存款失败:', error);
+    } finally {
+      setIsPermitLoading(false);
     }
   };
 
@@ -293,6 +414,29 @@ export default function Home() {
                   {isLoading ? '处理中...' : '存款'}
                 </button>
               </div>
+            </div>
+            
+            {/* 新增：签名存款表单 */}
+            <div className="border p-4 rounded-lg bg-blue-50">
+              <h3 className="text-lg font-semibold mb-2">通过签名存款 (EIP-2612)</h3>
+              <div className="flex space-x-2">
+                <input
+                  type="text"
+                  value={permitDepositAmount}
+                  onChange={(e) => setPermitDepositAmount(e.target.value)}
+                  placeholder="输入存款金额"
+                  className="flex-1 border rounded p-2"
+                  disabled={isPermitLoading}
+                />
+                <button
+                  onClick={handlePermitDeposit}
+                  disabled={isPermitLoading || !permitDepositAmount}
+                  className={`px-4 py-2 rounded ${isPermitLoading ? 'bg-gray-400' : 'bg-blue-500 hover:bg-blue-600'} text-white`}
+                >
+                  {isPermitLoading ? '处理中...' : '签名存款'}
+                </button>
+              </div>
+              <p className="text-xs text-gray-600 mt-2">无需预先授权，一步完成签名和存款</p>
             </div>
             
             {/* 取款表单 */}
