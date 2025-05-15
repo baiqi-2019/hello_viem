@@ -17,6 +17,7 @@ import { config } from './providers'; // 从providers.tsx导入config
 import { injected, walletConnect } from 'wagmi/connectors';
 import Counter_ABI from './contracts/Counter.json';
 import NFTMarket_ABI from './contracts/NFTMarket.json';
+import Link from 'next/link';
 
 // 合约地址
 const COUNTER_ADDRESS = "0x7148E9A2d539A99a66f1bd591E4E20cA35a08eD5";
@@ -228,6 +229,9 @@ export default function Home() {
             <div className="text-center">
               <p className="text-gray-600">钱包地址:</p>
               <p className="font-mono break-all">{address}</p>
+              <Link href="/transfers" className="mt-2 inline-block text-blue-500 hover:underline">
+                查看转账记录
+              </Link>
             </div>
             <div className="text-center">
               <p className="text-gray-600">当前网络:</p>

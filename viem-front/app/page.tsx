@@ -360,50 +360,16 @@ export default function Home() {
         client: publicClient,
       });
       
-      // 打印合约函数列表，确认可用的函数
-      console.log('合约函数列表:', TokenBank_ABI.abi
-        .filter(item => item.type === 'function')
-        .map(fn => `${fn.name}(${fn.inputs?.map(input => `${input.type} ${input.name}`).join(', ')})`));
-      
-      // 检查合约是否有depositWithPermit2函数
-      const depositWithPermit2Function = TokenBank_ABI.abi.find(
-        item => item.type === 'function' && item.name === 'depositWithPermit2'
-      );
-      
-      if (!depositWithPermit2Function) {
-        console.error('合约中找不到depositWithPermit2函数！查找可能的替代函数...');
-        // 打印所有函数名，帮助识别正确的函数
-        const allFunctions = TokenBank_ABI.abi
-          .filter(item => item.type === 'function')
-          .map(fn => fn.name || 'unnamed');
-        console.log('可用函数:', allFunctions);
-        
-        // 尝试查找名称相似的函数
-        const similarFunctions = allFunctions.filter(name => 
-          name.toLowerCase().includes('permit') && name.toLowerCase().includes('deposit')
-        );
-        
-        if (similarFunctions.length > 0) {
-          console.log('找到可能相关的函数:', similarFunctions);
-          throw new Error(`合约中找不到depositWithPermit2函数！可能的替代函数: ${similarFunctions.join(', ')}`);
-        } else {
-          throw new Error('合约中找不到depositWithPermit2函数，也没有找到类似的函数！请检查ABI是否正确。');
-        }
-      }
-      
-      console.log('depositWithPermit2函数签名:', 
-        `depositWithPermit2(${depositWithPermit2Function.inputs?.map(input => `${input.type} ${input.name}`).join(', ')})`);
-      
       // 获取Token合约地址
       const tokenAddress = await tokenBankContract.read.token() as `0x${string}`;
       
       // 获取Permit2地址
       const permit2Address = await tokenBankContract.read.PERMIT2_ADDRESS() as `0x${string}`;
       
-      console.log('Permit2 address:', permit2Address);
-      console.log('Token address:', tokenAddress);
+      console.log('Permit2 地址:', permit2Address);
+      console.log('Token 地址:', tokenAddress);
       
-      // 首先需要批准Permit2合约使用Token
+      // 首先批准Permit2合约使用Token
       const tokenContract = getContract({
         address: tokenAddress,
         abi: [{
@@ -422,20 +388,19 @@ export default function Home() {
         },
       });
       
-      console.log('Approving Permit2 to spend tokens...');
       // 授权Permit2代表用户转账
       const approveHash = await tokenContract.write.approve([
         permit2Address,
         parseEther(permit2DepositAmount),
       ], { account: address });
       
-      console.log('Approve hash:', approveHash);
+      console.log('授权哈希:', approveHash);
       
       // 等待批准交易确认
       await publicClient.waitForTransactionReceipt({ hash: approveHash });
-      console.log('Approval confirmed');
+      console.log('授权已确认');
       
-      // 获取nonce - 随机生成一个nonce
+      // 随机生成nonce
       const nonce = BigInt(Math.floor(Math.random() * 1000000));
       
       // 设置deadline为当前时间+1小时
@@ -480,17 +445,18 @@ export default function Home() {
           nonce
         },
         spender: PERMIT2_TOKEN_BANK_ADDRESS,
-        sigDeadline: deadline
+        sigDeadline: deadline,
+        owner: address
       };
       
-      console.log('Signing Permit2 message...');
       // 创建一个自定义stringify函数处理BigInt
       const customStringify = (obj: any) => {
         return JSON.stringify(obj, (_, value) => 
           typeof value === 'bigint' ? value.toString() : value
         );
       };
-      console.log('Value to sign:', customStringify(value));
+      
+      console.log('准备签名数据:', customStringify(value));
       
       // 签名
       const signature = await signTypedData(walletClient, {
@@ -501,43 +467,18 @@ export default function Home() {
         message: value,
       });
       
-      console.log('Signature:', signature);
+      console.log('签名完成:', signature);
       
       // 调用depositWithPermit2方法
-      console.log('Calling depositWithPermit2 with args:', customStringify([
-        parseEther(permit2DepositAmount), 
-        nonce, 
-        deadline, 
-        signature
-      ]));
-      
-      // 准备调用合约的参数
-      // 检查合约中实际可能的函数名称
-      let functionName = 'depositWithPermit2';
-      
-      // 如果找到了类似的函数替代
-      const allPermitFunctions = TokenBank_ABI.abi
-        .filter(item => item.type === 'function' && 
-                item.name && 
-                item.name.toLowerCase().includes('permit') && 
-                item.name.toLowerCase().includes('deposit'))
-        .map(fn => fn.name || 'unnamed');
-        
-      if (allPermitFunctions.length > 0 && !allPermitFunctions.includes('depositWithPermit2')) {
-        // 如果没有找到exactMatch但有类似的函数，使用第一个类似的函数
-        functionName = allPermitFunctions[0];
-        console.log(`使用找到的替代函数: ${functionName} 代替 depositWithPermit2`);
-      }
-      
       const hash = await walletClient.writeContract({
         address: PERMIT2_TOKEN_BANK_ADDRESS,
         abi: TokenBank_ABI.abi,
-        functionName: functionName,
+        functionName: 'depositWithPermit2',
         args: [parseEther(permit2DepositAmount), nonce, deadline, signature],
         account: address,
       });
       
-      console.log('Permit2 Deposit hash:', hash);
+      console.log('Permit2存款交易哈希:', hash);
       setTxHash(hash);
       
       // 等待交易确认后刷新余额
