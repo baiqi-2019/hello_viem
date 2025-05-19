@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { createPublicClient, createWalletClient, http, formatEther, getContract, custom, parseEther, Hex, encodeFunctionData, stringToHex, toBytes } from 'viem';
+import { createPublicClient, createWalletClient, http, getAddress, hexToBigInt, hexToNumber, formatEther, getContract, custom, parseEther, Hex, encodeFunctionData, stringToHex, toBytes, keccak256 } from 'viem';
 import { signTypedData } from 'viem/actions';
 import { sepolia } from 'viem/chains';
 import TokenBank_ABI from './contracts/TokenBank.json';
@@ -30,6 +30,8 @@ export default function Home() {
   // 新增状态：Permit2存款
   const [permit2DepositAmount, setPermit2DepositAmount] = useState<string>('');
   const [isPermit2Loading, setIsPermit2Loading] = useState(false);
+  const [locks, setLocks] = useState<Array<{user: string, startTime: string, amount: string}>>([]);
+  const [isLoadingLocks, setIsLoadingLocks] = useState(false);
 
   // 链接sepolia测试网
   const publicClient = createPublicClient({
@@ -493,6 +495,96 @@ export default function Home() {
     }
   };
 
+  const fetchLocks = async () => {
+    if (!address) return;
+    setIsLoadingLocks(true);
+    
+    try {
+      const esRNTAddress = "0x376aa6EdF84B27335B47b4d4F52c4643eaa4f8e2";
+      
+      // First, let's directly read the array length from slot 0
+      const lengthSlot = "0x0000000000000000000000000000000000000000000000000000000000000000";
+      const lengthHex = await publicClient.getStorageAt({
+        address: esRNTAddress,
+        slot: lengthSlot
+      });
+      
+      if (!lengthHex || lengthHex === "0x") {
+        throw new Error("Failed to get array length");
+      }
+      
+      const length = Number(hexToBigInt(lengthHex));
+      console.log("Array length:", length);
+      
+      const newLocks = [];
+      
+      // For dynamic arrays in Solidity, the elements are stored starting at keccak256(slot)
+      // Calculate the starting slot for the array elements
+      const startSlot = keccak256(toBytes(lengthSlot));
+      console.log("Start slot:", startSlot);
+      
+      // Read each element (struct) from storage
+      for (let i = 0; i < length; i++) {
+        try {
+          // Calculate the slot for this array element
+          const elementSlotBigInt = hexToBigInt(startSlot) + BigInt(i);
+          const elementSlot = `0x${elementSlotBigInt.toString(16)}`;
+          
+          console.log(`Reading element ${i} from slot ${elementSlot}`);
+          
+          // For structs, we need to read multiple slots
+          // First slot contains the user address
+          const slot1 = await publicClient.getStorageAt({
+            address: esRNTAddress,
+            slot: elementSlot
+          });
+          
+          if (!slot1 || slot1 === "0x") continue;
+          
+          // Extract user address from the first slot
+          const user = slot1.toLowerCase();
+          
+          // Second slot contains startTime and part of amount
+          const slot2BigInt = hexToBigInt(elementSlot) + BigInt(1);
+          const slot2 = `0x${slot2BigInt.toString(16)}`;
+          
+          const slot2Value = await publicClient.getStorageAt({
+            address: esRNTAddress,
+            slot: slot2
+          });
+          
+          if (!slot2Value || slot2Value === "0x") continue;
+          
+          // Extract startTime (uint64) from the first 8 bytes
+          const startTimeHex = `0x${slot2Value.slice(2, 18)}`;
+          const startTime = hexToNumber(startTimeHex);
+          
+          // Extract amount (uint256) - might span across slots
+          const amountPartHex = `0x${slot2Value.slice(18)}`;
+          const amount = formatEther(hexToBigInt(amountPartHex));
+          
+          newLocks.push({
+            user,
+            startTime: new Date(startTime * 1000).toLocaleString(),
+            amount
+          });
+          
+          console.log(`Successfully processed lock ${i}:`, { user, startTime, amount });
+        } catch (error) {
+          console.error(`Error processing lock at index ${i}:`, error);
+          continue;
+        }
+      }
+      
+      setLocks(newLocks);
+      console.log("Finished loading locks:", newLocks);
+    } catch (error) {
+      console.error('获取 locks 失败:', error);
+    } finally {
+      setIsLoadingLocks(false);
+    }
+  };
+
   useEffect(() => {
     const fetchEthBalance = async () => {
       if (!address) return;
@@ -655,6 +747,37 @@ export default function Home() {
             >
               断开连接
             </button>
+          </div>
+        )}
+      </div>
+      <div className="min-h-screen flex flex-col items-center justify-center p-8">
+        {isConnected && (
+          <div className="space-y-4">
+
+            {/* 添加 Locks 展示区域 */}
+            <div className="border p-4 rounded-lg bg-gray-50">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-lg font-semibold">Locks 数组</h3>
+                <button
+                  onClick={fetchLocks}
+                  disabled={isLoadingLocks}
+                  className={`px-4 py-2 rounded ${isLoadingLocks ? 'bg-gray-400' : 'bg-blue-500 hover:bg-blue-600'} text-white`}
+                >
+                  {isLoadingLocks ? '加载中...' : '刷新 Locks'}
+                </button>
+              </div>
+              
+              <div className="space-y-2">
+                {locks.map((lock, index) => (
+                  <div key={index} className="bg-white p-3 rounded shadow-sm">
+                    <p className="text-sm">locks[{index}]:</p>
+                    <p className="text-sm font-mono">user: {lock.user}</p>
+                    <p className="text-sm font-mono">startTime: {lock.startTime}</p>
+                    <p className="text-sm font-mono">amount: {lock.amount} ETH</p>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         )}
       </div>
