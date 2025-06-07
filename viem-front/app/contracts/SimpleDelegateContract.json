@@ -1,0 +1,78 @@
+{
+  "abi": [
+    {
+      "type": "function",
+      "name": "execute",
+      "inputs": [
+        {
+          "name": "calls",
+          "type": "tuple[]",
+          "components": [
+            { "name": "data", "type": "bytes" },
+            { "name": "to", "type": "address" },
+            { "name": "value", "type": "uint256" }
+          ]
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "payable"
+    },
+    {
+      "type": "function",
+      "name": "initialize",
+      "inputs": [],
+      "outputs": [],
+      "stateMutability": "payable"
+    },
+    {
+      "type": "function",
+      "name": "ping",
+      "inputs": [],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "approveAndDeposit",
+      "inputs": [
+        { "name": "token", "type": "address" },
+        { "name": "tokenbank", "type": "address" },
+        { "name": "amount", "type": "uint256" }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "event",
+      "name": "Executed",
+      "inputs": [
+        { "name": "to", "type": "address", "indexed": true },
+        { "name": "value", "type": "uint256", "indexed": false },
+        { "name": "data", "type": "bytes", "indexed": false }
+      ]
+    },
+    {
+      "type": "event",
+      "name": "Log",
+      "inputs": [
+        { "name": "message", "type": "string", "indexed": false }
+      ]
+    },
+    {
+      "type": "event",
+      "name": "ApproveAndDepositCompleted",
+      "inputs": [
+        { "name": "user", "type": "address", "indexed": true },
+        { "name": "amount", "type": "uint256", "indexed": false }
+      ]
+    },
+    {
+      "type": "receive",
+      "stateMutability": "payable"
+    },
+    {
+      "type": "fallback",
+      "stateMutability": "payable"
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+[submodule "viem-front/contracts-deploy/lib/forge-std"]
+	path = viem-front/contracts-deploy/lib/forge-std
+	url = https://github.com/foundry-rs/forge-std
+[submodule "viem-front/contracts-deploy/lib/openzeppelin-contracts"]
+	path = viem-front/contracts-deploy/lib/openzeppelin-contracts
+	url = https://github.com/OpenZeppelin/openzeppelin-contracts
